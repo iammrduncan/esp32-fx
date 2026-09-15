@@ -1,0 +1,41 @@
+From: esp32-fx <local@esp32-fx.invalid>
+Subject: [PATCH] xtensa: reserve deterministic PSRAM arena for WAMR
+
+The no-MMU allocator cannot reliably reconstruct a physically contiguous
+1 MiB block after networking and filesystem activity.  Reserve the final
+1088 KiB of PSRAM during memblock setup: 64 KiB for bounded native response
+streaming followed by 1 MiB for the guest linear-memory ceiling.
+
+The esp32-fx supervisor verifies this exact device-tree reservation before
+using the direct PSRAM addresses.  This trades idle general-purpose memory
+for deterministic repeatable Wasm launches; it is specific to the 8 MiB
+PSRAM deployment-host profile.
+
+---
+ arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts b/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
+index 333333333333..444444444444 100644
+--- a/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
++++ b/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
+@@ -9,6 +9,17 @@
+ 		device_type = "memory";
+ 		reg = <0x3d800000 0x00800000>;
+ 	};
++	reserved-memory {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		fx_wamr_arena: fx-wamr-arena@3def0000 {
++			/* 64 KiB native stream + 1 MiB guest linear memory. */
++			reg = <0x3def0000 0x00110000>;
++		};
++	};
++
+ };
+ 
+ &gpio_in_mux {
+-- 
+2.39.5

@@ -1,0 +1,106 @@
+From: esp32-fx <local@esp32-fx.invalid>
+Subject: [PATCH] xtensa: enable the reTerminal E1001 microSD slot
+
+The E1001 card slot shares SPI2 clock and MOSI with its e-paper panel and
+uses a separate hardware chip select. Route the card's MISO input through
+the ESP32-S3 GPIO matrix, hold the slot's active-high power enable on, and
+describe the active-low card-detect input to mmc-spi.
+
+Pin assignments and polarity follow Seeed's E1001 hardware examples:
+SCK 7, MISO 8, MOSI 9, SD CS 14, card detect 15, and power enable 16.
+
+---
+ arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts | 37 +++++++++++++++++++++--
+ 1 file changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts b/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
+--- a/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
++++ b/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
+@@ -11,12 +11,22 @@
+ 	};
+ };
+ 
++&gpio_in_mux {
++	status = "ok";
++
++	spi2_gpio_in: spi2-gpio-in {
++		pinctrl-single,pins = <
++			GPIO_FUNC_IN_SEL(102) 0x88>; /* SPI2 MISO from GPIO8 */
++	};
++};
++
+ &gpio_out_mux {
+ 	status = "ok";
+ 
+ 	spi2_gpio_out: spi2-gpio-out {
+ 		pinctrl-single,pins = <
+ 			GPIO_FUNC_OUT_SEL(10) 110	/* SPI2 CS0 */
++			GPIO_FUNC_OUT_SEL(14) 111	/* SPI2 CS1 */
+ 			GPIO_FUNC_OUT_SEL(9) 103	/* SPI2 MOSI */
+ 			GPIO_FUNC_OUT_SEL(7) 101>;	/* SPI2 SCK */
+ 	};
+@@ -28,7 +38,9 @@
+ 	spi2_pins: spi2-pins {
+ 		pinctrl-single,pins = <
+ 			PIN(10) (FUN_SEL(0) | FUN_DRV_20MA)	/* CS0 */
++			PIN(14) (FUN_SEL(0) | FUN_DRV_20MA)	/* CS1 */
+ 			PIN(9) (FUN_SEL(0) | FUN_DRV_40MA)	/* MOSI */
++			PIN(8) FUN0_20MA_IE_WPU		/* MISO */
+ 			PIN(7) (FUN_SEL(0) | FUN_DRV_40MA)>;	/* SCK */
+ 	};
+ 
+@@ -39,6 +51,12 @@
+ 			PIN(13) FUN0_20MA_IE_WPU>;	/* BUSY, active low */
+ 	};
+ 
++	sd_control_pins: sd-control-pins {
++		pinctrl-single,pins = <
++			PIN(15) FUN0_20MA_IE_WPU	/* card detect, active low */
++			PIN(16) FUN0_20MA>;		/* slot power enable */
++	};
++
+ 	uart0_pins: uart0-pins {
+ 		pinctrl-single,pins = <
+ 			PIN(43) FUN0_20MA		/* U0TXD */
+@@ -48,6 +66,13 @@
+ 
+ &gpio0 {
+ 	status = "ok";
++
++	sd-power-hog {
++		gpio-hog;
++		gpios = <16 GPIO_ACTIVE_HIGH>;
++		output-high;
++		line-name = "reterminal-sd-power";
++	};
+ };
+ 
+ &uart0 {
+@@ -57,7 +82,8 @@
+ };
+ 
+ &spi2 {
+-	pinctrl-0 = <&spi2_pins &spi2_gpio_out>;
++	pinctrl-0 = <&spi2_pins &spi2_gpio_in &spi2_gpio_out
++		     &sd_control_pins>;
+ 	pinctrl-names = "default";
+ 	status = "ok";
+ 
+@@ -68,6 +94,15 @@
+ 		pinctrl-0 = <&epaper_control_pins>;
+ 		pinctrl-names = "default";
+ 	};
++
++	mmc@1 {
++		compatible = "mmc-spi-slot";
++		reg = <1>;
++		spi-max-frequency = <10000000>;
++		voltage-ranges = <3200 3400>;
++		gpios = <&gpio0 15 GPIO_ACTIVE_LOW>;
++		disable-wp;
++	};
+ };
+ 
+ &acm {
+-- 
+2.39.5

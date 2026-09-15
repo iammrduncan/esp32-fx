@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "sources": {
+    "dlmalloc": {
+      "url": "https://gee.cs.oswego.edu/pub/misc/malloc.c",
+      "version": "2.8.6, MIT-0 relicensing dated 2023-09-25",
+      "sha256": "be7be56b40b4b31417e74e77687f9b96127ea6cae534cf236aee40a4c739508d",
+      "license": "MIT-0",
+      "role": "embedded guest allocator"
+    },
+    "linux_on_esp32_s3": {
+      "url": "https://github.com/paulneja/Linux-on-esp32-S3.git",
+      "ref": "refs/heads/main",
+      "commit": "72c246369a5bc9426420081b2e5a9050612d0177",
+      "note": "The README still names mmu-poc, but that remote branch was absent when this lock was resolved."
+    },
+    "linux_xtensa": {
+      "url": "https://github.com/jcmvbkbc/linux-xtensa.git",
+      "ref": "refs/tags/xtensa-6.11-esp32-tag",
+      "commit": "3b01ad2a1f71b72b27fefa08e4bf6acbe1de874f"
+    },
+    "seeed_gxepd2": {
+      "url": "https://github.com/Seeed-Projects/Seeed_GxEPD2.git",
+      "ref": "refs/heads/master",
+      "commit": "1100ea37c16b910fd79152f4250c13d802b9c20b",
+      "note": "Checked-out display-driver source used to lock the GDEY075T7/UC8179 command sequence."
+    },
+    "fx": {
+      "url": "https://github.com/vercel-labs/fx.git",
+      "ref": "refs/tags/v0.0.8",
+      "commit": "43c11dcc34a94a76df870af70bdb824579bf18a0"
+    },
+    "wamr": {
+      "url": "https://github.com/bytecodealliance/wasm-micro-runtime.git",
+      "ref": "refs/tags/WAMR-2.4.5",
+      "commit": "25bd7eb63e828e4bd242cc9b38d260b4b31c6605",
+      "patch": "guest/wamr-readonly.patch",
+      "patch_sha256": "afc6ee0d0119cd5f3005bc7a523a9e5bd14e54b99ef5e6490f60d7ddc20ce43c",
+      "note": "Adds immutable data-XIP input support for the classic mini-loader used on ESP32-S3."
+    }
+  }
+}

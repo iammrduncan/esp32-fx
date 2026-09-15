@@ -1,0 +1,43 @@
+#!/usr/bin/dash
+# Prepare and prove the fixed coding-example precondition.
+set -eu
+
+run=${1:?usage: fx-example-preflight RUN JAIL}
+jail=${2:?usage: fx-example-preflight RUN JAIL}
+test "$#" -eq 2
+
+case "$run" in
+/media/sd/fx-coding/*)
+	name=${run#/media/sd/fx-coding/}
+	case "$name" in ''|*[!A-Za-z0-9-]*) exit 2;; esac
+	;;
+*) exit 2;;
+esac
+test "$jail" = "$run/jail"
+
+finish() {
+	code=$?
+	printf '%s\n' "$code" > "$run/preflight.rc"
+	exit "$code"
+}
+trap finish EXIT
+
+cp /usr/share/fx/example/project/SPEC.md "$run/seed/SPEC.md"
+cp /usr/share/fx/example/project/battery.sh "$run/seed/battery.sh"
+cp /usr/share/fx/example/project/test.sh "$run/seed/test.sh"
+/usr/bin/dash /usr/share/fx/example/prepare-jail.sh \
+	"$run/seed" "$jail" --bind
+cp "$jail/project/battery.sh" "$run/battery.before.sh"
+cat /proc/meminfo > "$run/memory-before.txt"
+cat /proc/buddyinfo >> "$run/memory-before.txt"
+
+# The helper's RLIMIT_FSIZE=0 is intentional. Keep its stdout on a pipe and
+# let this trusted parent write the evidence file after the child exits.
+set +e
+output=$(/usr/bin/fx-example-test "$jail" 2>&1)
+result=$?
+set -e
+printf '%s\n' "$output" > "$run/before.txt"
+printf '%s\n' "$result" > "$run/before.rc"
+test "$result" -eq 1
+grep -Fq 'EXAMPLE_FAIL checks=14 failures=4' "$run/before.txt"

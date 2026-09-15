@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+# Credential-free commissioning response.  This still runs the real fx core,
+# ACP protocol, provider parser, WAMR runtime, and e-paper renderer.
+export AI_GATEWAY_API_KEY=offline-commissioning-key
+export FX_MODEL=fixture/esp32-s3
+export FX_WAMR_FIXTURE_TEXT='fx.sh is running on this reTerminal E1001!
+
+Linux 6.11
+WAMR low-memory interpreter
+ESP32-S3R8 / 8 MiB PSRAM
+
+The prompt travelled through the real fx agent core. Configure Wi-Fi and an AI Gateway key for live answers.'
+
+if [ "$#" -eq 0 ]; then
+    set -- 'Show the fx commissioning status.'
+fi
+exec /usr/bin/fx --title 'fx.sh | ESP32-S3 Linux' "$@"

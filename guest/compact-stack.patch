@@ -1,0 +1,40 @@
+From: esp32-fx <local@esp32-fx.invalid>
+Subject: [PATCH] core: bound embedded ACP/provider stack buffers
+
+The ESP32-S3 NOMMU target cannot admit a guest arena above 1 MiB alongside
+Wi-Fi. The embedded ACP client sends bounded 4 KiB prompts and native streams
+are already chunked, so avoid placing desktop-sized buffers on its auxiliary
+stack. Keep desktop limits unchanged.
+
+--- a/build.zig
++++ b/build.zig
+@@ -337,6 +337,6 @@
+         }),
+     });
+-    if (surface == .core) wasm_exe.stack_size = 512 * 1024;
++    if (surface == .core) wasm_exe.stack_size = 240 * 1024;
+     if (surface == .core) {
+         wasm_exe.root_module.addCSourceFile(.{
+             .file = b.path("src/embedded_dlmalloc_wrapper.c"),
+--- a/src/acp/jsonrpc.zig
++++ b/src/acp/jsonrpc.zig
+@@ -280,7 +280,7 @@ pub const Reader = struct {
+ 
+     read_context: ?*anyopaque = null,
+     read_fn: ReadFn,
+-    buf: [64 * 1024]u8 = undefined,
++    buf: [if (host_target.is_wasm) 8 * 1024 else 64 * 1024]u8 = undefined,
+     pos: usize = 0,
+     len: usize = 0,
+ 
+--- a/src/gateway/host_stream_provider.zig
++++ b/src/gateway/host_stream_provider.zig
+@@ -340,8 +340,8 @@ const HostStreamReader = struct {
+     last_cooperative_pulse: ?std.Io.Clock.Timestamp = null,
+     aborted: bool = false,
+     timed_out: bool = false,
+-    buffer: [16 * 1024]u8 = undefined,
++    buffer: [4 * 1024]u8 = undefined,
+     interface: std.Io.Reader = undefined,
+ 
+     fn init(

@@ -1,0 +1,131 @@
+#!/bin/sh
+# Mount the reTerminal E1001 microSD card and optionally use it for /home.
+# Deliberately never partitions or formats media.
+set -e
+
+mountpoint=/media/sd
+marker=/etc/fx-sd-home
+
+card_device() {
+	if test -b /dev/mmcblk0p1; then
+		printf '%s\n' /dev/mmcblk0p1
+	elif test -b /dev/mmcblk0; then
+		printf '%s\n' /dev/mmcblk0
+	else
+		return 1
+	fi
+}
+
+sd_is_mounted() {
+	awk -v target="$mountpoint" '$2 == target && $1 ~ /^\/dev\/mmcblk0/ { found=1 } END { exit !found }' /proc/mounts
+}
+
+home_is_sd() {
+	awk '$2 == "/home" && $1 ~ /^\/dev\/mmcblk0/ { found=1 } END { exit !found }' /proc/mounts
+}
+
+wait_for_card() {
+	count=0
+	while ! card_device >/dev/null 2>&1; do
+		count=$((count + 1))
+		test "$count" -lt 10 || return 1
+		sleep 1
+	done
+}
+
+mount_sd() {
+	if sd_is_mounted; then
+		return 0
+	fi
+	wait_for_card || {
+		echo 'fx-sd: no microSD block device; check insertion and dmesg' >&2
+		return 1
+	}
+	device=$(card_device)
+	mkdir -p "$mountpoint"
+	# Seeed documents FAT32 for this slot. Keep files root-writable and
+	# world-readable so the unprivileged fixed test helper can read its jail.
+	mount -t vfat -o rw,noatime,uid=0,gid=0,fmask=0133,dmask=0022 \
+		"$device" "$mountpoint"
+	sd_is_mounted || return 1
+}
+
+mount_home() {
+	mount_sd
+	home=$mountpoint/home
+	mkdir -p "$home/root"
+	if ! test -e "$home/.fx-sd-home-initialized"; then
+		# Seed, but never overwrite, any existing SD home on first adoption.
+		if test -d /home/root; then
+			cp -a /home/root/. "$home/root/"
+		fi
+		printf '%s\n' 'esp32-fx SD home v1' > "$home/.fx-sd-home-initialized"
+	fi
+	if ! home_is_sd; then
+		cd /
+		mount -o bind "$home" /home
+	fi
+	home_is_sd || {
+		echo 'fx-sd: SD bind mount over /home was not established' >&2
+		return 1
+	}
+}
+
+status() {
+	echo 'microSD block devices:'
+	awk '$4 ~ /^mmcblk0/ { print $4, $3 " KiB" }' /proc/partitions
+	if sd_is_mounted; then
+		echo "storage: mounted at $mountpoint"
+	else
+		echo 'storage: not mounted'
+	fi
+	if home_is_sd; then
+		echo 'home: SD-backed now'
+	elif test -e "$marker"; then
+		echo 'home: enabled for boot, but not mounted now'
+	else
+		echo 'home: internal flash'
+	fi
+}
+
+case "${1:-status}" in
+status)
+	status
+	;;
+mount)
+	mount_sd
+	echo "fx-sd: mounted writable storage at $mountpoint"
+	;;
+unmount)
+	home_is_sd && {
+		echo 'fx-sd: disable SD home before unmounting storage' >&2
+		exit 1
+	}
+	sd_is_mounted && umount "$mountpoint"
+	;;
+home)
+	mount_home
+	echo 'fx-sd: /home is SD-backed for this boot'
+	;;
+enable-home)
+	mount_home
+	: > "$marker"
+	echo 'fx-sd: /home is SD-backed now and on future boots'
+	;;
+disable-home)
+	rm -f "$marker"
+	if home_is_sd; then
+		cd /
+		umount /home
+	fi
+	echo 'fx-sd: future boots will use internal-flash /home'
+	;;
+init)
+	test -e "$marker" || exit 0
+	mount_home
+	;;
+*)
+	echo 'usage: fx-sd [status|mount|unmount|home|enable-home|disable-home]' >&2
+	exit 2
+	;;
+esac

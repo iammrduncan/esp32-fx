@@ -1,0 +1,178 @@
+From: esp32-fx <local@esp32-fx.invalid>
+Subject: [PATCH] crypto: expose ESP32-S3 RSA modexp to root userspace
+
+The Linux-on-ESP32-S3 project already provides an ESP32-S3 hardware RSA
+Crypto API driver, including boot-time accelerator self-tests.  Reuse that
+driver for verified TLS on this low-memory NOMMU target by adding one bounded,
+root-only raw public modular-exponentiation ioctl.
+
+Linux 6.11 does not expose akcipher algorithms through AF_ALG, while the
+uClibc/Mbed TLS userspace implementation cannot complete RSA verification in
+the available contiguous memory.  The misc device is mode 0600, additionally
+requires CAP_SYS_RAWIO, caps all operands at the accelerator's existing
+4096-bit limit, and uses the driver's existing lock and hardware operation.
+
+This is an extension of the hardware RSA driver authored and maintained by
+the Linux-on-ESP32-S3 contributors; it does not replace or relicense their
+work.
+
+---
+ drivers/crypto/esp32s3_rsa.c | 106 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 106 insertions(+)
+
+diff --git a/drivers/crypto/esp32s3_rsa.c b/drivers/crypto/esp32s3_rsa.c
+--- a/drivers/crypto/esp32s3_rsa.c
++++ b/drivers/crypto/esp32s3_rsa.c
+@@ -1,12 +1,17 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include <linux/delay.h>
++#include <linux/capability.h>
++#include <linux/fs.h>
+ #include <linux/io.h>
++#include <linux/ioctl.h>
+ #include <linux/kernel.h>
++#include <linux/miscdevice.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/slab.h>
+ #include <linux/mpi.h>
++#include <linux/uaccess.h>
+ #include <crypto/internal/rsa.h>
+ #include <crypto/internal/akcipher.h>
+ #include <crypto/akcipher.h>
+@@ -36,6 +41,20 @@
+ #define RSA_MEM_PD_BIT\tBIT(0)
+ 
+ #define ESP_RSA_MAX_WORDS\t128
++#define ESP_RSA_MAX_BYTES\t(ESP_RSA_MAX_WORDS * sizeof(u32))
++
++struct esp_rsa_modexp {
++\tu32 modulus_len;
++\tu32 exponent_len;
++\tu32 input_len;
++\tu32 output_len;
++\tu8 modulus[ESP_RSA_MAX_BYTES];
++\tu8 exponent[ESP_RSA_MAX_BYTES];
++\tu8 input[ESP_RSA_MAX_BYTES];
++\tu8 output[ESP_RSA_MAX_BYTES];
++};
++
++#define ESP_RSA_IOC_MODEXP _IOWR('R', 0x53, struct esp_rsa_modexp)
+ 
+ static void __iomem *rsa;
+ static void __iomem *sys;
+@@ -208,6 +227,92 @@
+ \treturn ret;
+ }
+ 
++/* Root-only raw public modular exponentiation for low-memory TLS clients.
++ * The Crypto API has no AF_ALG akcipher interface, so expose the existing
++ * accelerator through one bounded ioctl instead of duplicating RSA in RAM. */
++static long esp_rsa_user_modexp(struct esp_rsa_modexp *op)
++{
++\tu32 *words = NULL, *n, *e, *x, *rr, *z;
++\tMPI modulus = NULL, input = NULL;
++\tunsigned int nwords;
++\tint ret = -EINVAL;
++
++\tif (op->modulus_len < 64 || op->modulus_len > ESP_RSA_MAX_BYTES ||
++\t    op->modulus_len % sizeof(u32) || !op->exponent_len ||
++\t    op->exponent_len > op->modulus_len ||
++\t    op->input_len != op->modulus_len)
++\t\treturn -EINVAL;
++\tnwords = op->modulus_len / sizeof(u32);
++\twords = kcalloc(nwords * 5, sizeof(*words), GFP_KERNEL);
++\tif (!words)
++\t\treturn -ENOMEM;
++\tn = words;
++\te = n + nwords;
++\tx = e + nwords;
++\trr = x + nwords;
++\tz = rr + nwords;
++\tbe_bytes_to_words(op->modulus, op->modulus_len, n, nwords);
++\tbe_bytes_to_words(op->exponent, op->exponent_len, e, nwords);
++\tbe_bytes_to_words(op->input, op->input_len, x, nwords);
++\tif (!(n[0] & 1) || !words_bitlen(e, nwords))
++\t\tgoto out;
++\tmodulus = mpi_read_raw_data(op->modulus, op->modulus_len);
++\tinput = mpi_read_raw_data(op->input, op->input_len);
++\tif (!modulus || !input) {
++\t\tret = -ENOMEM;
++\t\tgoto out;
++\t}
++\tif (mpi_cmp(input, modulus) >= 0)
++\t\tgoto out;
++\tret = compute_rr(modulus, nwords, rr);
++\tif (ret)
++\t\tgoto out;
++\tret = hw_modexp(z, x, e, n, rr, compute_mprime(n[0]), nwords);
++\tif (ret)
++\t\tgoto out;
++\twords_to_be_bytes(z, nwords, op->output);
++\top->output_len = op->modulus_len;
++out:
++\tmpi_free(input);
++\tmpi_free(modulus);
++\tkfree(words);
++\treturn ret;
++}
++
++static long esp_rsa_user_ioctl(struct file *file, unsigned int command,
++\t\t\t       unsigned long argument)
++{
++\tstruct esp_rsa_modexp *operation;
++\tlong ret;
++
++\tif (command != ESP_RSA_IOC_MODEXP)
++\t\treturn -ENOTTY;
++\tif (!capable(CAP_SYS_RAWIO))
++\t\treturn -EPERM;
++\toperation = memdup_user((void __user *)argument, sizeof(*operation));
++\tif (IS_ERR(operation))
++\t\treturn PTR_ERR(operation);
++\tret = esp_rsa_user_modexp(operation);
++\tif (!ret && copy_to_user((void __user *)argument, operation,
++\t\t\t\t sizeof(*operation)))
++\t\tret = -EFAULT;
++\tkfree_sensitive(operation);
++\treturn ret;
++}
++
++static const struct file_operations esp_rsa_user_fops = {
++\t.owner = THIS_MODULE,
++\t.unlocked_ioctl = esp_rsa_user_ioctl,
++\t.llseek = no_llseek,
++};
++
++static struct miscdevice esp_rsa_user_device = {
++\t.minor = MISC_DYNAMIC_MINOR,
++\t.name = "esp32-rsa",
++\t.fops = &esp_rsa_user_fops,
++\t.mode = 0600,
++};
++
+ static int esp_rsa_op(struct akcipher_request *req, const u32 *exp)
+ {
+ \tstruct crypto_akcipher *tfm = crypto_akcipher_reqtfm(req);
+@@ -484,6 +589,12 @@
+ \t\tpr_err("esp32s3-rsa: akcipher register failed: %d\n", ret);
+ \t\tgoto err;
+ \t}
++\tret = misc_register(&esp_rsa_user_device);
++\tif (ret) {
++\t\tpr_err("esp32s3-rsa: userspace device register failed: %d\n", ret);
++\t\tcrypto_unregister_akcipher(&esp_rsa_alg);
++\t\tgoto err;
++\t}
+ \tpr_info("esp32s3-rsa: hardware RSA registered (rsa-esp32s3)\n");
+ \treturn 0;
+ err:
+@@ -496,6 +607,7 @@
+ 
+ static void __exit esp_rsa_exit(void)
+ {
++\tmisc_deregister(&esp_rsa_user_device);
+ \tcrypto_unregister_akcipher(&esp_rsa_alg);
+ \tiounmap(rsa);
+ \tiounmap(sys);

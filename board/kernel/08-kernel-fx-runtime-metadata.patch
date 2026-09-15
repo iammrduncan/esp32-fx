@@ -1,0 +1,23 @@
+From: esp32-fx <local@esp32-fx.invalid>
+Subject: [PATCH] xtensa: reserve WAMR function and execution metadata
+
+The compact fx module has more than 2300 functions. Its contiguous runtime
+instance table exceeds 64 KiB and otherwise needs a 128 KiB buddy block.
+Reserve that block at boot as well as the guest and response arenas. The
+function table and execution environment share the bounded 128 KiB block.
+
+--- a/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
++++ b/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
+@@ -16,9 +16,9 @@
+ 		#size-cells = <1>;
+ 		ranges;
+ 
+-		fx_wamr_arena: fx-wamr-arena@3def0000 {
+-			/* 64 KiB native stream + 1 MiB guest linear memory. */
+-			reg = <0x3def0000 0x00110000>;
++		fx_wamr_arena: fx-wamr-arena@3ded0000 {
++			/* 128 KiB metadata + 64 KiB stream + 1 MiB guest. */
++			reg = <0x3ded0000 0x00130000>;
+ 		};
+ 	};
+ 

@@ -1,0 +1,120 @@
+From: esp32-fx <local@esp32-fx.invalid>
+Subject: [PATCH] xtensa: add reTerminal E1001 e-paper SPI target
+
+Route SPI2 through the ESP32-S3 GPIO matrix to the E1001's GDEY075T7
+panel and expose the panel through spidev for the small userspace renderer.
+The compatible string remains board-specific rather than using the rejected
+generic "spidev" DT compatible.
+
+---
+ arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts | 86 ++++++++++++++++++++++
+ drivers/spi/spidev.c                               |  1 +
+ 2 files changed, 87 insertions(+)
+ create mode 100644 arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
+
+diff --git a/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts b/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/xtensa/boot/dts/esp32s3-reterminal-e1001.dts
+@@ -0,0 +1,86 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/dts-v1/;
++#include <dt-bindings/gpio/gpio.h>
++#include "gpio-esp32.h"
++#include "esp32s3.dtsi"
++
++/ {
++	memory@0 {
++		device_type = "memory";
++		reg = <0x3d800000 0x00800000>;
++	};
++};
++
++&gpio_out_mux {
++	status = "ok";
++
++	spi2_gpio_out: spi2-gpio-out {
++		pinctrl-single,pins = <
++			GPIO_FUNC_OUT_SEL(10) 110	/* SPI2 CS0 */
++			GPIO_FUNC_OUT_SEL(9) 103	/* SPI2 MOSI */
++			GPIO_FUNC_OUT_SEL(7) 101>;	/* SPI2 SCK */
++	};
++};
++
++&iomux {
++	status = "ok";
++
++	spi2_pins: spi2-pins {
++		pinctrl-single,pins = <
++			PIN(10) (FUN_SEL(0) | FUN_DRV_20MA)	/* CS0 */
++			PIN(9) (FUN_SEL(0) | FUN_DRV_40MA)	/* MOSI */
++			PIN(7) (FUN_SEL(0) | FUN_DRV_40MA)>;	/* SCK */
++	};
++
++	epaper_control_pins: epaper-control-pins {
++		pinctrl-single,pins = <
++			PIN(11) FUN0_20MA		/* DC */
++			PIN(12) FUN0_20MA		/* RESET */
++			PIN(13) FUN0_20MA_IE_WPU>;	/* BUSY, active low */
++	};
++
++	uart0_pins: uart0-pins {
++		pinctrl-single,pins = <
++			PIN(43) FUN0_20MA		/* U0TXD */
++			PIN(44) FUN0_20MA_IE_WPU>;	/* U0RXD */
++	};
++};
++
++&gpio0 {
++	status = "ok";
++};
++
++&uart0 {
++	pinctrl-0 = <&uart0_pins>;
++	pinctrl-names = "default";
++	status = "ok";
++};
++
++&spi2 {
++	pinctrl-0 = <&spi2_pins &spi2_gpio_out>;
++	pinctrl-names = "default";
++	status = "ok";
++
++	epaper@0 {
++		compatible = "seeed,reterminal-e1001-epd";
++		reg = <0>;
++		spi-max-frequency = <2000000>;
++		pinctrl-0 = <&epaper_control_pins>;
++		pinctrl-names = "default";
++	};
++};
++
++&acm {
++	status = "ok";
++};
++
++&ipc {
++	wifi@1 {
++		compatible = "esp,esp32-wifi-shmem";
++		reg = <1>;
++	};
++};
++
++&intc {
++	reg = <0x600c2800 0x800>;
++};
+diff --git a/drivers/spi/spidev.c b/drivers/spi/spidev.c
+index 95fb5f1c91bc..222222222222 100644
+--- a/drivers/spi/spidev.c
++++ b/drivers/spi/spidev.c
+@@ -740,6 +740,7 @@ static const struct of_device_id spidev_dt_ids[] = {
+ 	{ .compatible = "rohm,bh2228fv", .data = &spidev_of_check },
+ 	{ .compatible = "rohm,dh2228fv", .data = &spidev_of_check },
+ 	{ .compatible = "semtech,sx1301", .data = &spidev_of_check },
++	{ .compatible = "seeed,reterminal-e1001-epd" },
+ 	{ .compatible = "silabs,em3581", .data = &spidev_of_check },
+ 	{ .compatible = "silabs,si3210", .data = &spidev_of_check },
+ 	{},
+-- 
+2.39.5

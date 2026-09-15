@@ -1,0 +1,11 @@
+#!/bin/sh
+
+case "${1:-}" in
+start)
+	if test -e /etc/fx-sd-home; then
+		/usr/bin/fx-sd init || echo 'fx-sd: persistent SD home mount failed' >&2
+	fi
+	;;
+stop)
+	;;
+esac

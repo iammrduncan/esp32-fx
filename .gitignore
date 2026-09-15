@@ -1,0 +1,31 @@
+# Raw device images can contain Wi-Fi credentials, passwords, tokens, and user data.
+/esp32-s3-backup/
+/private/
+/.env
+/.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.log
+*.bin
+*.jffs2
+*.cramfs
+
+# Generated firmware and runtime artifacts.
+build/
+dist/
+*.aot
+*.wasm
+*.o
+*.a
+*.so
+
+# Reproducible checkouts are identified by sources.lock.json, not vendored here.
+third_party/
+.cache/
+.tools/
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store

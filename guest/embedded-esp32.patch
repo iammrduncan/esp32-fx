@@ -1,0 +1,71 @@
+From: esp32-fx <local@esp32-fx.invalid>
+Subject: [PATCH] wasm: bound core memory for the ESP32-S3 profile
+
+The E1001 has 8 MiB of PSRAM shared with Linux. Keep the headless fx core,
+but use embedded-scale bounds for its linked stack, model-catalog response,
+error response, retained history, and tool-result budget. The native host
+supplies a one-model catalog, so the smaller catalog buffer does not truncate
+the public gateway's much larger discovery response.
+
+---
+ build.zig                                  | 2 +-
+ src/gateway/host_stream_provider.zig       | 2 +-
+ src/gateway/js_host_model_catalog.zig      | 2 +-
+ src/wasm_core_main.zig                     | 4 ++--
+ 4 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/build.zig b/build.zig
+index f29350f..d118115 100644
+--- a/build.zig
++++ b/build.zig
+@@ -336,7 +336,7 @@ fn addWasmArtifact(
+             .strip = true,
+         }),
+     });
+-    if (surface == .core) wasm_exe.stack_size = 1024 * 1024;
++    if (surface == .core) wasm_exe.stack_size = 512 * 1024;
+     wasm_exe.root_module.addImport("build_options", wasm_options.createModule());
+ 
+     const install_wasm = b.addInstallArtifact(wasm_exe, .{});
+diff --git a/src/gateway/host_stream_provider.zig b/src/gateway/host_stream_provider.zig
+index d2e545c..c4b143a 100644
+--- a/src/gateway/host_stream_provider.zig
++++ b/src/gateway/host_stream_provider.zig
+@@ -6,6 +6,6 @@ const credential_authority = @import("../core/auth/credential_authority.zig");
+ 
+ const Allocator = std.mem.Allocator;
+-const max_error_body_bytes = 1024 * 1024;
++const max_error_body_bytes = 64 * 1024;
+ const cooperative_pulse_interval_ms = 50;
+ 
+ pub const Transport = struct {
+diff --git a/src/gateway/js_host_model_catalog.zig b/src/gateway/js_host_model_catalog.zig
+index 8f45a4e..7f6694f 100644
+--- a/src/gateway/js_host_model_catalog.zig
++++ b/src/gateway/js_host_model_catalog.zig
+@@ -53,7 +53,7 @@ fn fetch(
+     defer headers_json.deinit();
+     std.json.Stringify.value(headers.items, .{}, &headers_json.writer) catch return error.OutOfMemory;
+ 
+-    const response_cap = 4 * 1024 * 1024;
++    const response_cap = 64 * 1024;
+     const response = try alloc.alloc(u8, response_cap);
+     defer alloc.free(response);
+     var status: u16 = 0;
+diff --git a/src/wasm_core_main.zig b/src/wasm_core_main.zig
+index 96d3844..8b0eb5c 100644
+--- a/src/wasm_core_main.zig
++++ b/src/wasm_core_main.zig
+@@ -45,8 +45,8 @@ pub fn main(init: std.process.Init) !void {
+         .max_read_file_lines = 0,
+         .max_read_file_line_len = 0,
+         .max_command_output_bytes = 0,
+-        .max_tool_result_bytes = 64 * 1024,
+-        .max_history_turns = 100,
++        .max_tool_result_bytes = 16 * 1024,
++        .max_history_turns = 8,
+         .context_registry = .{ .default_provider = context_contract.empty_provider },
+         .mode_registry = builtin_modes.registry,
+         .credential_override = io_mod.getenv("AI_GATEWAY_API_KEY"),
+-- 
+2.39.5

@@ -1,0 +1,4 @@
+# Keep backups, caches, and credentials outside the container build context.
+*
+!board/
+!board/Containerfile

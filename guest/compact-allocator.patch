@@ -1,0 +1,75 @@
+From: esp32-fx <local@esp32-fx.invalid>
+Subject: [PATCH] core: use dlmalloc for a compact WASI heap
+
+Apply after embedded-esp32.patch. The build wrapper supplies the pinned,
+unmodified Doug Lea source and local WASI configuration. Explicit allocator
+ABI names avoid Zig libc's internal symbol binding.
+
+--- a/build.zig
++++ b/build.zig
+@@ -337,6 +337,14 @@
+         }),
+     });
+     if (surface == .core) wasm_exe.stack_size = 512 * 1024;
++    if (surface == .core) {
++        wasm_exe.root_module.addCSourceFile(.{
++            .file = b.path("src/embedded_dlmalloc_wrapper.c"),
++            .flags = &.{ "-Os", "-fno-builtin" },
++        });
++        wasm_exe.root_module.export_symbol_names = &.{
++            "fx_heap_used", "fx_heap_footprint" };
++    }
+     wasm_exe.root_module.addImport("build_options", wasm_options.createModule());
+ 
+     const install_wasm = b.addInstallArtifact(wasm_exe, .{});
+--- a/src/wasm_core_main.zig
++++ b/src/wasm_core_main.zig
+@@ -1,0 +1,4 @@
++// Shared allocator for all allocations in this embedded-only source profile.
++pub const embedded_allocator = @import("embedded_allocator.zig").allocator;
++pub const embedded_turn_arena = @import("embedded_arena.zig").CompactArenaAllocator;
++pub const embedded_content_capture_limit: usize = 4 * 1024;
+@@ -29,4 +31,11 @@
+-pub fn main(init: std.process.Init) !void {
+-    io_mod.setIo(init.io);
+-    io_mod.setEnvironMap(init.environ_map);
++pub fn main(init: std.process.Init.Minimal) !void {
++    var threaded: std.Io.Threaded = .init(embedded_allocator, .{
++        .argv0 = .init(init.args),
++        .environ = init.environ,
++    });
++    defer threaded.deinit();
++    var environment = try std.process.Environ.createMap(init.environ, embedded_allocator);
++    defer environment.deinit();
++    io_mod.setIo(threaded.io());
++    io_mod.setEnvironMap(&environment);
+     try acp_server.run(std.heap.c_allocator, .{
+--- a/src/core/hosts/js_host_tools.zig
++++ b/src/core/hosts/js_host_tools.zig
+@@ -7,1 +7,1 @@
+-const bridge_max_result_bytes: usize = 64 * 1024;
++const bridge_max_result_bytes: usize = 8 * 1024;
+--- a/src/core/agent/runtime/orchestrator.zig
++++ b/src/core/agent/runtime/orchestrator.zig
+@@ -4646,6 +4646,10 @@ pub fn processAgentPrompt(
+     agent: *runtime_agent.Agent,
+ ) !void {
+-    var arena_state = std.heap.ArenaAllocator.init(std.heap.c_allocator);
++    const TurnArena = if (@hasDecl(@import("root"), "embedded_turn_arena"))
++        @import("root").embedded_turn_arena
++    else
++        std.heap.ArenaAllocator;
++    var arena_state = TurnArena.init(std.heap.c_allocator);
+     defer arena_state.deinit();
+     const arena = arena_state.allocator();
+     var job = borrowed_job;
+@@ -6617,6 +6621,8 @@ fn processQueuedPromptLoop(
+                 .prepared_request_body = prepared_request_body,
+                 .trace_ctx = step_ctx,
+-                .content_capture_limit = null,
++                .content_capture_limit = if (@hasDecl(@import("root"), "embedded_content_capture_limit"))
++                    @import("root").embedded_content_capture_limit
++                else null,
+                 .cooperative_pulse = deps.cooperative_transport_pulse,
+                 .delivery = &gateway_delivery,
+                 .attempt_evidence = &gateway_attempt_evidence,
